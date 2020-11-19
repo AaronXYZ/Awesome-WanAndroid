@@ -13,6 +13,10 @@ import javax.inject.Singleton;
 import dagger.Module;
 import dagger.Provides;
 import json.chao.com.wanandroid.app.WanAndroidApp;
+import json.chao.com.wanandroid.performance.net.OkHttpDns;
+import json.chao.com.wanandroid.performance.net.OkHttpEvent;
+import json.chao.com.wanandroid.performance.net.OkHttpEventListener;
+import me.jessyan.retrofiturlmanager.RetrofitUrlManager;
 import okhttp3.Cache;
 import okhttp3.CacheControl;
 import okhttp3.Interceptor;
@@ -65,17 +69,17 @@ public class HttpModule {
     @Singleton
     @Provides
     OkHttpClient provideClient(OkHttpClient.Builder builder) {
-        if (BuildConfig.DEBUG) {
-            HttpLoggingInterceptor loggingInterceptor = new HttpLoggingInterceptor();
-            loggingInterceptor.setLevel(HttpLoggingInterceptor.Level.BASIC);
-            builder.addInterceptor(loggingInterceptor);
-            builder.addNetworkInterceptor(new StethoInterceptor());
-        }
+        // 网络请求质量监控
+        builder.eventListenerFactory(OkHttpEventListener.FACTORY);
+        // httpDns 优化
+        builder.dns(OkHttpDns.getIns(WanAndroidApp.getAppComponent().getContext()));
+
         File cacheFile = new File(Constants.PATH_CACHE);
         Cache cache = new Cache(cacheFile, 1024 * 1024 * 50);
         Interceptor cacheInterceptor = chain -> {
             Request request = chain.request();
             if (!CommonUtils.isNetworkConnected()) {
+                // 无网时强制使用数据缓存，以提升用户体验。
                 request = request.newBuilder()
                         .cacheControl(CacheControl.FORCE_CACHE)
                         .build();
@@ -98,10 +102,18 @@ public class HttpModule {
             }
             return response;
         };
-        //设置缓存
+        // 缓存优化
         builder.addNetworkInterceptor(cacheInterceptor);
         builder.addInterceptor(cacheInterceptor);
         builder.cache(cache);
+
+        if (BuildConfig.DEBUG) {
+            HttpLoggingInterceptor loggingInterceptor = new HttpLoggingInterceptor();
+            loggingInterceptor.setLevel(HttpLoggingInterceptor.Level.BASIC);
+            builder.addInterceptor(loggingInterceptor);
+            builder.addNetworkInterceptor(new StethoInterceptor());
+        }
+
         //设置超时
         builder.connectTimeout(10, TimeUnit.SECONDS);
         builder.readTimeout(20, TimeUnit.SECONDS);
@@ -111,7 +123,7 @@ public class HttpModule {
         //cookie认证
         builder.cookieJar(new PersistentCookieJar(new SetCookieCache(),
                 new SharedPrefsCookiePersistor(WanAndroidApp.getInstance())));
-        return builder.build();
+        return RetrofitUrlManager.getInstance().with(builder).build();
     }
 
     private Retrofit createRetrofit(Retrofit.Builder builder, OkHttpClient client, String url) {
